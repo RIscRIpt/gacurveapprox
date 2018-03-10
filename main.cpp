@@ -43,7 +43,7 @@ enum class eqfunction {
     addition,
     subtraction,
     multiplication,
-    /* power, */
+    power,
     count,
 };
 
@@ -68,7 +68,7 @@ size_t const function_operand_count[] = {
     2,
     2,
     2,
-    /* 2, */
+    2,
 };
 
 size_t operand_count(eqfunction f) {
@@ -89,7 +89,7 @@ eqvalue rand_value() {
 }
 
 double rand_constant() {
-    std::normal_distribution<> random(0, 1000);
+    std::normal_distribution<> random(0, 10);
     return random(random_engine);
 }
 
@@ -128,13 +128,19 @@ public:
         return std::make_unique<CurveEquation>(*this);
     }
 
+    void replace_with_constant(double value) {
+        operation_ = value;
+        operands_.clear();
+        nodes_ = 1;
+    }
+
     int nodes() const {
         return nodes_;
     }
 
-    eqfunction function() const {
-        return std::get<eqfunction>(operation_);
-    }
+    bool is_function() const { return std::holds_alternative<eqfunction>(operation_); }
+    eqfunction& function() { return std::get<eqfunction>(operation_); }
+    eqfunction function() const { return std::get<eqfunction>(operation_); }
 
     bool is_constant() const { return std::holds_alternative<double>(operation_); }
     double& constant() { return std::get<double>(operation_); }
@@ -145,6 +151,7 @@ public:
         switch (std::get<eqvalue>(operation_)) {
             case eqvalue::x: return x;
             default:
+                std::cout << "EQVALUE = " << (int)std::get<eqvalue>(operation_) << std::endl;
                 throw std::out_of_range("invalid eqvalue");
         }
     }
@@ -167,10 +174,10 @@ public:
                 assert(operands_.size() == 2);
                 return operands_[0]->evaluate(x) * operands_[1]->evaluate(x);
                 break;
-            /* case eqfunction::power: */
-            /*     assert(operands_.size() == 2); */
-            /*     return std::pow(operands_[0]->evaluate(x), operands_[1]->evaluate(x)); */
-            /*     break; */
+            case eqfunction::power:
+                assert(operands_.size() == 2);
+                return std::pow(operands_[0]->evaluate(x), operands_[1]->evaluate(x));
+                break;
             default:
             case eqfunction::count:
                 throw std::out_of_range("invalid eqfunction");
@@ -181,7 +188,9 @@ public:
         if (is_value()) {
             switch (std::get<eqvalue>(operation_)) {
                 case eqvalue::x: os << 'x'; break;
-                default: throw std::out_of_range("invalid eqvalue");
+                default:
+                    std::cout << "EQVALUE = " << (int)std::get<eqvalue>(operation_) << std::endl;
+                    throw std::out_of_range("invalid eqvalue");
             }
             return;
         }
@@ -214,14 +223,14 @@ public:
                 operands_[1]->print(os);
                 os << ')';
                 break;
-            /* case eqfunction::power: */
-            /*     assert(operands_.size() == 2); */
-            /*     os << '('; */
-            /*     operands_[0]->print(os); */
-            /*     os << ")^("; */
-            /*     operands_[1]->print(os); */
-            /*     os << ')'; */
-            /*     break; */
+            case eqfunction::power:
+                assert(operands_.size() == 2);
+                os << '(';
+                operands_[0]->print(os);
+                os << ")^(";
+                operands_[1]->print(os);
+                os << ')';
+                break;
             default:
             case eqfunction::count:
                 throw std::out_of_range("invalid eqfunction");
@@ -240,9 +249,23 @@ public:
         }
     }
 
-    CurveEquation& get_nth_node_parent(int n) {
+    std::pair<CurveEquation&, int> get_nth_node_parent(int n, int id = 0) {
+        if (n <= 0) {
+            std::cout << n << std::endl;
+        }
         assert(n > 0);
-        return get_nth_node((n - 1) / 2);
+        if (n == 1)
+            return {*this, id};
+        n--;
+        id++;
+        for (auto const &op : operands_) {
+            if (n == 0)
+                return {*this, id};
+            if (op->nodes() > n)
+                return op->get_nth_node_parent(n, id);
+            n -= op->nodes();
+            id += op->nodes();
+        }
     }
 
     void swap(CurveEquation &other) {
@@ -264,6 +287,31 @@ public:
         return fitness;
     }
 
+    bool simplify() {
+        if (!is_function())
+            return false;
+        assert(operands_.size() == 2);
+        if (operands_[0]->is_constant() && operands_[1]->is_constant()) {
+            switch (function()) {
+                case eqfunction::addition:
+                    replace_with_constant(operands_[0]->constant() + operands_[1]->constant());
+                    return true;
+                case eqfunction::subtraction:
+                    replace_with_constant(operands_[0]->constant() - operands_[1]->constant());
+                    return true;
+                case eqfunction::multiplication:
+                    replace_with_constant(operands_[0]->constant() * operands_[1]->constant());
+                    return true;
+                case eqfunction::power:
+                    replace_with_constant(std::pow(operands_[0]->constant(), operands_[1]->constant()));
+                    return true;
+                default:
+                case eqfunction::count:
+                    throw std::out_of_range("invalid eqfunction");
+            }
+        }
+    }
+
     void mutate_tree();
     void mutate_coefficients();
 
@@ -273,6 +321,24 @@ public:
             nodes_ += op->recalculate_nodes_count();
         return nodes_;
     }
+
+    bool is_valid() const {
+        if (is_function()) {
+            if (function() == eqfunction::power) {
+                assert(operands_.size() == 2);
+                if (operands_[1]->nodes() != 1)
+                    return false;
+                return operands_[0]->is_valid();
+            }
+        }
+        for (auto const &op : operands_) {
+            if (!op->is_valid())
+                return false;
+        }
+        return true;
+    }
+
+    static int const ROOT_NODE = 0;
 
 private:
     std::variant<eqfunction, eqvalue, double> operation_;
@@ -298,26 +364,46 @@ std::unique_ptr<CurveEquation> rand_curve_equation(int max_nodes) {
     auto func = rand_func();
     std::vector<std::unique_ptr<CurveEquation>> operands;
     std::uniform_int_distribution<> random_max_nodes(1, max_nodes / 2);
-    for (size_t i = 0; i < operand_count(func); i++) {
-        int nodes = max_nodes;
-        if (i != operand_count(func) - 1) {
-            nodes = random_max_nodes(random_engine) * 2 - 1;
-            max_nodes -= nodes;
+    if (func != eqfunction::power) {
+        for (size_t i = 0; i < operand_count(func); i++) {
+            int nodes = max_nodes;
+            if (i != operand_count(func) - 1) {
+                nodes = random_max_nodes(random_engine) * 2 - 1;
+                max_nodes -= nodes;
+            }
+            operands.emplace_back(rand_curve_equation(nodes));
         }
-        operands.emplace_back(rand_curve_equation(nodes));
+    } else {
+        operands.emplace_back(rand_curve_equation(max_nodes - 1));
+        operands.emplace_back(std::make_unique<CurveEquation>(rand_constant()));
     }
 
     return std::make_unique<CurveEquation>(func, std::move(operands));
 }
 
+bool is_first_child_node(int parent, int child) {
+    return parent + 1 == child;
+}
+
 void CurveEquation::mutate_tree() {
     std::uniform_int_distribution<> random_node(0, nodes() - 1);
-    auto &mutation_base = get_nth_node(random_node(random_engine));
+    auto base_node = random_node(random_engine);
+    auto &mutation_base = get_nth_node(base_node);
+    if (base_node != ROOT_NODE) {
+        auto base_parent = get_nth_node_parent(base_node);
+        if (base_parent.first.is_function()) {
+            if (!is_first_child_node(base_parent.second, base_node)) {
+                mutation_base.mutate_coefficients();
+                return;
+            }
+        }
+    }
     auto max_nodes = MAX_NODES - (nodes() - mutation_base.nodes());
     std::uniform_int_distribution<> random_nodes(1, std::max(max_nodes / 2, 1));
     auto nodes = random_nodes(random_engine) * 2 - 1;
     mutation_base.swap(*rand_curve_equation(nodes));
     recalculate_nodes_count();
+    simplify();
 }
 
 void CurveEquation::mutate_coefficients() {
@@ -338,35 +424,38 @@ void CurveEquation::mutate_coefficients() {
 std::pair<std::unique_ptr<CurveEquation>, std::unique_ptr<CurveEquation>>
 crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
 {
-    auto eq1copy = eq1.copy();
-    auto eq2copy = eq2.copy();
-    auto children = std::make_pair(std::move(eq1copy), std::move(eq2copy));
+    auto children = std::make_pair(eq1.copy(), eq2.copy());
 
     std::uniform_int_distribution<> random;
 
     auto c1size = children.first->nodes();
     auto c2size = children.second->nodes();
 
-    while (true) {
-        auto &c1cross_node = children.first->get_nth_node(random(random_engine) % c1size);
-        auto &c2cross_node = children.second->get_nth_node(random(random_engine) % c2size);
-        if (children.first->nodes() - c1cross_node.nodes() + c2cross_node.nodes() > MAX_NODES ||
-                children.second->nodes() - c2cross_node.nodes() + c1cross_node.nodes() > MAX_NODES)
-        {
-            continue;
-        }
-        c1cross_node.swap(c2cross_node);
-        break;
+    auto &c1cross_node = children.first->get_nth_node(random(random_engine) % c1size);
+    auto &c2cross_node = children.second->get_nth_node(random(random_engine) % c2size);
+    if (children.first->nodes() - c1cross_node.nodes() + c2cross_node.nodes() > MAX_NODES ||
+            children.second->nodes() - c2cross_node.nodes() + c1cross_node.nodes() > MAX_NODES)
+    {
+        return {nullptr, nullptr};
     }
+
+    // try swap
+    c1cross_node.swap(c2cross_node);
 
     children.first->recalculate_nodes_count();
     children.second->recalculate_nodes_count();
+
+    if (!children.first->is_valid() || !children.second->is_valid())
+        return {nullptr, nullptr};
 
     children.first->mutate_tree();
     children.second->mutate_tree();
 
     children.first->mutate_coefficients();
     children.second->mutate_coefficients();
+
+    children.first->simplify();
+    children.second->simplify();
 
     return children;
 }
@@ -431,15 +520,7 @@ void init_opengl(int argc, char *argv[]) {
     WND_BOTTOM -= wnd_unit;
 }
 
-int test() {
-    auto eq = rand_curve_equation(3);
-    eq->print(std::cout); std::cout << std::endl;
-    eq->get_nth_node(2).print(std::cout); std::cout << std::endl;
-}
-
 int main(int argc, char *argv[]) {
-    return test();
-
     init_opengl(argc, argv);
 
     const size_t population_size = 200;
@@ -453,7 +534,8 @@ int main(int argc, char *argv[]) {
         auto max_nodes = random_max_nodes(random_engine) * 2 + 1;
         auto equation = rand_curve_equation(max_nodes);
         assert(equation->nodes() == max_nodes);
-        equations.emplace_back(std::make_pair(std::move(equation), equation->get_fitness(points)));
+        auto fitness = equation->get_fitness(points);
+        equations.emplace_back(std::make_pair(std::move(equation), fitness));
     }
 
     size_t generation = 0;
@@ -468,6 +550,8 @@ int main(int argc, char *argv[]) {
                     *equations[first_equation_id].first,
                     *equations[second_equation_id].first
                     );
+            if (children.first == nullptr || children.second == nullptr)
+                continue;
             auto fitness = std::make_pair(
                     children.first->get_fitness(points),
                     children.second->get_fitness(points)
@@ -480,11 +564,13 @@ int main(int argc, char *argv[]) {
         /* std::cout << "Mutation" << std::endl; */
         std::uniform_real_distribution<> random_mutation(0.0, 1.0);
         for (auto &eq : equations) {
-            if (random_mutation(random_engine) < 0.2) {
+            if (random_mutation(random_engine) < 0.1) {
                 eq.first->mutate_tree();
+                eq.second = eq.first->get_fitness(points);
             }
-            if (random_mutation(random_engine) < 0.2) {
+            if (random_mutation(random_engine) < 0.25) {
                 eq.first->mutate_coefficients();
+                eq.second = eq.first->get_fitness(points);
             }
         }
 
@@ -495,7 +581,7 @@ int main(int argc, char *argv[]) {
         history_entry.min = std::numeric_limits<double>::max();
         history_entry.max = 0.0;
         for (auto &eq : equations) {
-            auto fitness = eq.first->get_fitness(points);
+            auto fitness = eq.second;
             history_entry.min = std::min(history_entry.min, fitness);
             history_entry.max = std::max(history_entry.max, fitness);
             if (history_entry.max == fitness)
@@ -592,10 +678,10 @@ void display() {
             auto y = best_equation->evaluate(x);
             glVertex2d(x, y);
             if (std::isnan(y)) {
-                std::cout << "X " << x << " Y " << y << '\n';
+                std::cout << "NAN DETECTED!!! X " << x << " Y " << y << '\n';
                 best_equation->print(std::cout);
                 std::cout << std::endl;
-                assert(false);
+                /* assert(false); */
             }
             /* std::cout << "plotting: " << x << '\t' << best_equation->evaluate(x) << '\n'; */
         }
