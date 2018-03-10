@@ -53,30 +53,21 @@ enum class eqvalue {
 };
 
 std::vector<vec2> points {
-    vec2{ 1, 4, },
-    vec2{ 2, 1 },
-    vec2{ 3, 10 },
-    vec2{ 4, 5 },
-    vec2{ 5, 7 },
-    vec2{ 6, 3 },
-    vec2{ 7, 4 },
-    vec2{ 8, 1 },
-    vec2{ 9, 2 },
+    vec2{ 1, 2, },
+    vec2{ 2, 3, },
+    vec2{ 3, 15, },
+    vec2{ 4, 25, },
+    vec2{ 4.01, 0 },
+    /* vec2{ 1, 4, }, */
+    /* vec2{ 2, 1 }, */
+    /* vec2{ 3, 10 }, */
+    /* vec2{ 4, 5 }, */
+    /* vec2{ 5, 7 }, */
+    /* vec2{ 6, 3 }, */
+    /* vec2{ 7, 4 }, */
+    /* vec2{ 8, 1 }, */
+    /* vec2{ 9, 2 }, */
 };
-
-size_t const function_operand_count[] = {
-    2,
-    2,
-    2,
-    2,
-};
-
-size_t operand_count(eqfunction f) {
-    int fn = static_cast<int>(f);
-    if (fn >= 0 && fn < static_cast<int>(eqfunction::count))
-        return function_operand_count[fn];
-    throw std::out_of_range("invalid eqfunction");
-}
 
 eqfunction rand_func() {
     std::uniform_int_distribution<> random(0, static_cast<int>(eqfunction::count) - 1);
@@ -93,44 +84,56 @@ double rand_constant() {
     return random(random_engine);
 }
 
+double rand_power_constant() {
+    std::uniform_real_distribution<> random(1, 10);
+    return random(random_engine);
+}
+
+class CurveEquation;
+using PCurveEquation = std::unique_ptr<CurveEquation>;
+
 class CurveEquation {
 public:
     CurveEquation(eqvalue value) noexcept
         : operation_(value)
+        , left_(nullptr)
+        , right_(nullptr)
         , nodes_(1)
     {}
 
     CurveEquation(double value) noexcept
         : operation_(value)
+        , left_(nullptr)
+        , right_(nullptr)
         , nodes_(1)
     {}
 
-    CurveEquation(eqfunction func, std::vector<std::unique_ptr<CurveEquation>> &&operands)
+    CurveEquation(eqfunction func, PCurveEquation left, PCurveEquation right)
         : operation_(func)
-        , operands_(std::move(operands))
+        , left_(std::move(left))
+        , right_(std::move(right))
         , nodes_(1)
     {
-        for (auto const &op : operands_) {
-            nodes_ += op->nodes();
-        }
+        assert(left_ && right_);
+        nodes_ += left_->nodes();
+        nodes_ += right_->nodes();
     }
 
     CurveEquation(CurveEquation const &other)
         : operation_(other.operation_)
+        , left_(other.left_ ? other.left_->copy() : nullptr)
+        , right_(other.right_ ? other.right_->copy() : nullptr)
         , nodes_(other.nodes_)
-    {
-        for (auto const &op : other.operands_) {
-            operands_.emplace_back(op->copy());
-        }
-    }
+    {}
 
-    std::unique_ptr<CurveEquation> copy() const {
+    PCurveEquation copy() const {
         return std::make_unique<CurveEquation>(*this);
     }
 
     void replace_with_constant(double value) {
         operation_ = value;
-        operands_.clear();
+        left_ = nullptr;
+        right_ = nullptr;
         nodes_ = 1;
     }
 
@@ -146,7 +149,7 @@ public:
     double& constant() { return std::get<double>(operation_); }
     double constant() const { return std::get<double>(operation_); }
 
-    bool is_value() const { return std::holds_alternative<eqvalue>(operation_); }
+    bool is_variable() const { return std::holds_alternative<eqvalue>(operation_); }
     double value(double x) const {
         switch (std::get<eqvalue>(operation_)) {
             case eqvalue::x: return x;
@@ -157,26 +160,23 @@ public:
     }
 
     double evaluate(double x) const {
-        if (is_value())
+        if (is_variable())
             return value(x);
         if (is_constant())
             return constant();
+        assert(left_ && right_);
         switch (function()) {
             case eqfunction::addition:
-                assert(operands_.size() == 2);
-                return operands_[0]->evaluate(x) + operands_[1]->evaluate(x);
+                return left_->evaluate(x) + right_->evaluate(x);
                 break;
             case eqfunction::subtraction:
-                assert(operands_.size() == 2);
-                return operands_[0]->evaluate(x) - operands_[1]->evaluate(x);
+                return left_->evaluate(x) - right_->evaluate(x);
                 break;
             case eqfunction::multiplication:
-                assert(operands_.size() == 2);
-                return operands_[0]->evaluate(x) * operands_[1]->evaluate(x);
+                return left_->evaluate(x) * right_->evaluate(x);
                 break;
             case eqfunction::power:
-                assert(operands_.size() == 2);
-                return std::pow(operands_[0]->evaluate(x), operands_[1]->evaluate(x));
+                return std::pow(left_->evaluate(x), right_->evaluate(x));
                 break;
             default:
             case eqfunction::count:
@@ -185,7 +185,7 @@ public:
     }
 
     void print(std::ostream &os) const{
-        if (is_value()) {
+        if (is_variable()) {
             switch (std::get<eqvalue>(operation_)) {
                 case eqvalue::x: os << 'x'; break;
                 default:
@@ -198,37 +198,34 @@ public:
             os << constant();
             return;
         }
+        assert(left_ && right_);
         switch (function()) {
             case eqfunction::addition:
-                assert(operands_.size() == 2);
                 os << '(';
-                operands_[0]->print(os);
+                left_->print(os);
                 os << ")+(";
-                operands_[1]->print(os);
+                right_->print(os);
                 os << ')';
                 break;
             case eqfunction::subtraction:
-                assert(operands_.size() == 2);
                 os << '(';
-                operands_[0]->print(os);
+                left_->print(os);
                 os << ")-(";
-                operands_[1]->print(os);
+                right_->print(os);
                 os << ')';
                 break;
             case eqfunction::multiplication:
-                assert(operands_.size() == 2);
                 os << '(';
-                operands_[0]->print(os);
+                left_->print(os);
                 os << ")*(";
-                operands_[1]->print(os);
+                right_->print(os);
                 os << ')';
                 break;
             case eqfunction::power:
-                assert(operands_.size() == 2);
                 os << '(';
-                operands_[0]->print(os);
+                left_->print(os);
                 os << ")^(";
-                operands_[1]->print(os);
+                right_->print(os);
                 os << ')';
                 break;
             default:
@@ -238,39 +235,36 @@ public:
     }
 
     CurveEquation& get_nth_node(int n) {
-        assert(n >= 0);
-        if (n == 0)
+        assert(n >= ROOT_NODE);
+        if (n == ROOT_NODE)
             return *this;
+        assert(left_ && right_);
         n--;
-        for (auto const &op : operands_) {
-            if (op->nodes() > n)
-                return op->get_nth_node(n);
-            n -= op->nodes();
-        }
+        if (left_->nodes() > n)
+            return left_->get_nth_node(n);
+        return right_->get_nth_node(n - left_->nodes());
     }
 
     std::pair<CurveEquation&, int> get_nth_node_parent(int n, int id = 0) {
-        if (n <= 0) {
-            std::cout << n << std::endl;
-        }
-        assert(n > 0);
-        if (n == 1)
-            return {*this, id};
+        assert(n > ROOT_NODE);
+        assert(left_ && right_);
         n--;
         id++;
-        for (auto const &op : operands_) {
-            if (n == 0)
-                return {*this, id};
-            if (op->nodes() > n)
-                return op->get_nth_node_parent(n, id);
-            n -= op->nodes();
-            id += op->nodes();
-        }
+        if (n == 0)
+            return {*this, id};
+        if (left_->nodes() > n)
+            return left_->get_nth_node_parent(n, id);
+        n -= left_->nodes();
+        id += left_->nodes();
+        if (n == 0)
+            return {*this, id};
+        return right_->get_nth_node_parent(n, id);
     }
 
     void swap(CurveEquation &other) {
-        operands_.swap(other.operands_);
         std::swap(operation_, other.operation_);
+        std::swap(left_, other.left_);
+        std::swap(right_, other.right_);
         std::swap(nodes_, other.nodes_);
     }
 
@@ -287,66 +281,79 @@ public:
         return fitness;
     }
 
-    bool simplify() {
-        if (!is_function())
-            return false;
-        assert(operands_.size() == 2);
-        if (operands_[0]->is_constant() && operands_[1]->is_constant()) {
-            switch (function()) {
-                case eqfunction::addition:
-                    replace_with_constant(operands_[0]->constant() + operands_[1]->constant());
-                    return true;
-                case eqfunction::subtraction:
-                    replace_with_constant(operands_[0]->constant() - operands_[1]->constant());
-                    return true;
-                case eqfunction::multiplication:
-                    replace_with_constant(operands_[0]->constant() * operands_[1]->constant());
-                    return true;
-                case eqfunction::power:
-                    replace_with_constant(std::pow(operands_[0]->constant(), operands_[1]->constant()));
-                    return true;
-                default:
-                case eqfunction::count:
-                    throw std::out_of_range("invalid eqfunction");
-            }
-        }
-    }
-
     void mutate_tree();
     void mutate_coefficients();
+    void mutate_power_coefficient();
 
     int recalculate_nodes_count() {
         nodes_ = 1;
-        for (auto const & op :operands_)
-            nodes_ += op->recalculate_nodes_count();
+        if (left_) nodes_ += left_->recalculate_nodes_count();
+        if (right_) nodes_ += right_->recalculate_nodes_count();
         return nodes_;
     }
 
     bool is_valid() const {
         if (is_function()) {
+            assert(left_ && right_);
             if (function() == eqfunction::power) {
-                assert(operands_.size() == 2);
-                if (operands_[1]->nodes() != 1)
+                if (!right_->is_constant())
                     return false;
-                return operands_[0]->is_valid();
+                return left_->is_valid();
             }
-        }
-        for (auto const &op : operands_) {
-            if (!op->is_valid())
-                return false;
+            return left_->is_valid() && right_->is_valid();
         }
         return true;
+    }
+
+    bool simplify() {
+        if (simplify_without_node_recalculation()) {
+            recalculate_nodes_count();
+            return true;
+        }
+        return false;
     }
 
     static int const ROOT_NODE = 0;
 
 private:
+    bool simplify_without_node_recalculation() {
+        if (!is_function())
+            return false;
+        assert(left_ && right_);
+        if (left_->is_constant() && right_->is_constant()) {
+            switch (function()) {
+                case eqfunction::addition:
+                    replace_with_constant(left_->constant() + right_->constant());
+                    return true;
+                case eqfunction::subtraction:
+                    replace_with_constant(left_->constant() - right_->constant());
+                    return true;
+                case eqfunction::multiplication:
+                    replace_with_constant(left_->constant() * right_->constant());
+                    return true;
+                case eqfunction::power:
+                    replace_with_constant(std::pow(left_->constant(), right_->constant()));
+                    return true;
+                default:
+                case eqfunction::count:
+                    throw std::out_of_range("invalid eqfunction");
+            }
+        } else if (left_->is_variable() && right_->is_variable()) {
+            if (function() == eqfunction::subtraction) {
+                replace_with_constant(0);
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::variant<eqfunction, eqvalue, double> operation_;
-    std::vector<std::unique_ptr<CurveEquation>> operands_;
+    PCurveEquation left_;
+    PCurveEquation right_;
     int nodes_;
 };
 
-std::unique_ptr<CurveEquation> rand_curve_equation(int max_nodes) {
+PCurveEquation rand_curve_equation(int max_nodes) {
     assert(max_nodes > 0);
     assert(max_nodes < MAX_NODES);
     assert(max_nodes & 1);
@@ -362,23 +369,18 @@ std::unique_ptr<CurveEquation> rand_curve_equation(int max_nodes) {
     max_nodes--;
 
     auto func = rand_func();
-    std::vector<std::unique_ptr<CurveEquation>> operands;
+    PCurveEquation left, right;
     std::uniform_int_distribution<> random_max_nodes(1, max_nodes / 2);
     if (func != eqfunction::power) {
-        for (size_t i = 0; i < operand_count(func); i++) {
-            int nodes = max_nodes;
-            if (i != operand_count(func) - 1) {
-                nodes = random_max_nodes(random_engine) * 2 - 1;
-                max_nodes -= nodes;
-            }
-            operands.emplace_back(rand_curve_equation(nodes));
-        }
+        int nodes = random_max_nodes(random_engine) * 2 - 1;
+        left = rand_curve_equation(nodes);
+        right = rand_curve_equation(max_nodes - nodes);
     } else {
-        operands.emplace_back(rand_curve_equation(max_nodes - 1));
-        operands.emplace_back(std::make_unique<CurveEquation>(rand_constant()));
+        left = rand_curve_equation(max_nodes - 1);
+        right = std::make_unique<CurveEquation>(rand_power_constant());
     }
 
-    return std::make_unique<CurveEquation>(func, std::move(operands));
+    return std::make_unique<CurveEquation>(func, std::move(left), std::move(right));
 }
 
 bool is_first_child_node(int parent, int child) {
@@ -402,7 +404,7 @@ void CurveEquation::mutate_tree() {
     std::uniform_int_distribution<> random_nodes(1, std::max(max_nodes / 2, 1));
     auto nodes = random_nodes(random_engine) * 2 - 1;
     mutation_base.swap(*rand_curve_equation(nodes));
-    recalculate_nodes_count();
+    /* recalculate_nodes_count(); */
     simplify();
 }
 
@@ -414,14 +416,19 @@ void CurveEquation::mutate_coefficients() {
         constant() = random_mutation(random_engine);
         if (sign)
             constant() = -constant();
-    } else {
-        for (auto const &op : operands_) {
-            op->mutate_coefficients();
-        }
+    } else if (is_function()) {
+        assert(left_ && right_);
+        left_->mutate_coefficients();
+        if (function() == eqfunction::power)
+            right_->mutate_power_coefficient();
     }
 }
 
-std::pair<std::unique_ptr<CurveEquation>, std::unique_ptr<CurveEquation>>
+void CurveEquation::mutate_power_coefficient() {
+    replace_with_constant(rand_power_constant());
+}
+
+std::pair<PCurveEquation, PCurveEquation>
 crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
 {
     auto children = std::make_pair(eq1.copy(), eq2.copy());
@@ -488,7 +495,7 @@ bool in_optimum(std::vector<fitness_history_entry> const &fitness_history) {
     return history_length == optimum_history_length && sd < 10.0 && avg_mean > 1e6;
 }
 
-using equation_w_fitness = std::pair<std::unique_ptr<CurveEquation>, double>;
+using equation_w_fitness = std::pair<PCurveEquation, double>;
 using equation_list = std::vector<equation_w_fitness>;
 
 CurveEquation *best_equation = nullptr;
@@ -681,6 +688,7 @@ void display() {
                 std::cout << "NAN DETECTED!!! X " << x << " Y " << y << '\n';
                 best_equation->print(std::cout);
                 std::cout << std::endl;
+                assert(best_equation->is_valid());
                 /* assert(false); */
             }
             /* std::cout << "plotting: " << x << '\t' << best_equation->evaluate(x) << '\n'; */
