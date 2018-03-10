@@ -10,7 +10,19 @@
 #include <cassert>
 #include <chrono>
 
-constexpr int MAX_NODES = 15;
+#include <GL/gl.h>
+#include <GL/glext.h>
+#include <GL/freeglut.h> //glut.h extension for fonts
+
+double PLOT_STEP = 0.01;
+
+double WND_LEFT = 0.0;
+double WND_RIGHT = 1.0;
+
+double WND_BOTTOM = 0.0;
+double WND_TOP = 1.0;
+
+constexpr int MAX_NODES = 31;
 
 std::default_random_engine random_engine(std::chrono::system_clock::now().time_since_epoch().count());
 
@@ -31,7 +43,7 @@ enum class eqfunction {
     addition,
     subtraction,
     multiplication,
-    power,
+    /* power, */
     count,
 };
 
@@ -40,11 +52,23 @@ enum class eqvalue {
     count,
 };
 
+std::vector<vec2> points {
+    vec2{ 1, 4, },
+    vec2{ 2, 1 },
+    vec2{ 3, 10 },
+    vec2{ 4, 5 },
+    vec2{ 5, 7 },
+    vec2{ 6, 3 },
+    vec2{ 7, 4 },
+    vec2{ 8, 1 },
+    vec2{ 9, 2 },
+};
+
 size_t const function_operand_count[] = {
     2,
     2,
     2,
-    2,
+    /* 2, */
 };
 
 size_t operand_count(eqfunction f) {
@@ -112,24 +136,17 @@ public:
         return std::get<eqfunction>(operation_);
     }
 
+    bool is_constant() const { return std::holds_alternative<double>(operation_); }
+    double& constant() { return std::get<double>(operation_); }
+    double constant() const { return std::get<double>(operation_); }
+
+    bool is_value() const { return std::holds_alternative<eqvalue>(operation_); }
     double value(double x) const {
         switch (std::get<eqvalue>(operation_)) {
             case eqvalue::x: return x;
             default:
                 throw std::out_of_range("invalid eqvalue");
         }
-    }
-
-    double constant() const {
-        return std::get<double>(operation_);
-    }
-
-    bool is_value() const {
-        return std::holds_alternative<eqvalue>(operation_);
-    }
-
-    bool is_constant() const {
-        return std::holds_alternative<double>(operation_);
     }
 
     double evaluate(double x) const {
@@ -150,10 +167,10 @@ public:
                 assert(operands_.size() == 2);
                 return operands_[0]->evaluate(x) * operands_[1]->evaluate(x);
                 break;
-            case eqfunction::power:
-                assert(operands_.size() == 2);
-                return std::pow(operands_[0]->evaluate(x), operands_[1]->evaluate(x));
-                break;
+            /* case eqfunction::power: */
+            /*     assert(operands_.size() == 2); */
+            /*     return std::pow(operands_[0]->evaluate(x), operands_[1]->evaluate(x)); */
+            /*     break; */
             default:
             case eqfunction::count:
                 throw std::out_of_range("invalid eqfunction");
@@ -197,14 +214,14 @@ public:
                 operands_[1]->print(os);
                 os << ')';
                 break;
-            case eqfunction::power:
-                assert(operands_.size() == 2);
-                os << '(';
-                operands_[0]->print(os);
-                os << ")^(";
-                operands_[1]->print(os);
-                os << ')';
-                break;
+            /* case eqfunction::power: */
+            /*     assert(operands_.size() == 2); */
+            /*     os << '('; */
+            /*     operands_[0]->print(os); */
+            /*     os << ")^("; */
+            /*     operands_[1]->print(os); */
+            /*     os << ')'; */
+            /*     break; */
             default:
             case eqfunction::count:
                 throw std::out_of_range("invalid eqfunction");
@@ -223,6 +240,11 @@ public:
         }
     }
 
+    CurveEquation& get_nth_node_parent(int n) {
+        assert(n > 0);
+        return get_nth_node((n - 1) / 2);
+    }
+
     void swap(CurveEquation &other) {
         operands_.swap(other.operands_);
         std::swap(operation_, other.operation_);
@@ -232,15 +254,18 @@ public:
     double get_fitness(std::vector<vec2> const &points) {
         double error = 0.0;
         for (auto const &p : points) {
-            error += pow(evaluate(p.x) - p.y, 2.0);
-            if (std::isnan(error))
+            double y = evaluate(p.x);
+            if (std::isnan(y))
                 return 0.0;
+            error += pow(y - p.y, 2.0);
         }
-        double fitness = 1.0 / (error + 1.0) + 1.0 / nodes();
+        double fitness = 1.0 / (error + 1.0);
+        /* fitness += std::sqrt(MAX_NODES - nodes()) * 0.1; */
         return fitness;
     }
 
-    void mutate();
+    void mutate_tree();
+    void mutate_coefficients();
 
     int recalculate_nodes_count() {
         nodes_ = 1;
@@ -285,7 +310,7 @@ std::unique_ptr<CurveEquation> rand_curve_equation(int max_nodes) {
     return std::make_unique<CurveEquation>(func, std::move(operands));
 }
 
-void CurveEquation::mutate() {
+void CurveEquation::mutate_tree() {
     std::uniform_int_distribution<> random_node(0, nodes() - 1);
     auto &mutation_base = get_nth_node(random_node(random_engine));
     auto max_nodes = MAX_NODES - (nodes() - mutation_base.nodes());
@@ -293,6 +318,21 @@ void CurveEquation::mutate() {
     auto nodes = random_nodes(random_engine) * 2 - 1;
     mutation_base.swap(*rand_curve_equation(nodes));
     recalculate_nodes_count();
+}
+
+void CurveEquation::mutate_coefficients() {
+    if (is_constant()) {
+        std::uniform_int_distribution<> random_sign(0, 1);
+        std::normal_distribution<> random_mutation(constant(), constant() * 0.1);
+        bool sign = random_sign(random_engine);
+        constant() = random_mutation(random_engine);
+        if (sign)
+            constant() = -constant();
+    } else {
+        for (auto const &op : operands_) {
+            op->mutate_coefficients();
+        }
+    }
 }
 
 std::pair<std::unique_ptr<CurveEquation>, std::unique_ptr<CurveEquation>>
@@ -321,6 +361,12 @@ crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
 
     children.first->recalculate_nodes_count();
     children.second->recalculate_nodes_count();
+
+    children.first->mutate_tree();
+    children.second->mutate_tree();
+
+    children.first->mutate_coefficients();
+    children.second->mutate_coefficients();
 
     return children;
 }
@@ -356,14 +402,47 @@ bool in_optimum(std::vector<fitness_history_entry> const &fitness_history) {
 using equation_w_fitness = std::pair<std::unique_ptr<CurveEquation>, double>;
 using equation_list = std::vector<equation_w_fitness>;
 
-int main() {
-    const size_t population_size = 1000;
+CurveEquation *best_equation = nullptr;
 
-    std::vector<vec2> points {
-        vec2{ -4, 2, },
-        vec2{ -2, 0, },
-        vec2{ 0, 6 },
-    };
+void display();
+void reshape(int width, int height);
+
+void init_opengl(int argc, char *argv[]) {
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
+
+    glutInitWindowSize(640, 480);
+    glutCreateWindow("Curve");
+
+    glutDisplayFunc(display);
+    glutReshapeFunc(reshape);
+
+    for (auto const &p : points) {
+        WND_LEFT = std::min(WND_LEFT, p.x);
+        WND_RIGHT = std::max(WND_RIGHT, p.x);
+        WND_TOP = std::max(WND_TOP, p.y);
+        WND_BOTTOM = std::min(WND_BOTTOM, p.y);
+    }
+
+    double wnd_unit = (WND_RIGHT - WND_LEFT) * 0.05;
+    WND_LEFT -= wnd_unit;
+    WND_RIGHT += wnd_unit;
+    WND_TOP += wnd_unit;
+    WND_BOTTOM -= wnd_unit;
+}
+
+int test() {
+    auto eq = rand_curve_equation(3);
+    eq->print(std::cout); std::cout << std::endl;
+    eq->get_nth_node(2).print(std::cout); std::cout << std::endl;
+}
+
+int main(int argc, char *argv[]) {
+    return test();
+
+    init_opengl(argc, argv);
+
+    const size_t population_size = 200;
 
     std::vector<fitness_history_entry> fitness_history;
     equation_list equations;
@@ -377,11 +456,12 @@ int main() {
         equations.emplace_back(std::make_pair(std::move(equation), equation->get_fitness(points)));
     }
 
+    size_t generation = 0;
     do {
         std::uniform_int_distribution<> random_equation(0, equations.size() - 1);
         // Crossover
         /* std::cout << "Crossover" << std::endl; */
-        while (equations.size() < population_size * 2) {
+        while (equations.size() < population_size * 10) {
             auto first_equation_id = random_equation(random_engine);
             auto second_equation_id = random_equation(random_engine);
             auto children = crossover_curve_equations(
@@ -400,8 +480,11 @@ int main() {
         /* std::cout << "Mutation" << std::endl; */
         std::uniform_real_distribution<> random_mutation(0.0, 1.0);
         for (auto &eq : equations) {
-            if (random_mutation(random_engine) < 0.1) {
-                eq.first->mutate();
+            if (random_mutation(random_engine) < 0.2) {
+                eq.first->mutate_tree();
+            }
+            if (random_mutation(random_engine) < 0.2) {
+                eq.first->mutate_coefficients();
             }
         }
 
@@ -411,7 +494,6 @@ int main() {
         fitness_history_entry history_entry;
         history_entry.min = std::numeric_limits<double>::max();
         history_entry.max = 0.0;
-        CurveEquation *best_equation;
         for (auto &eq : equations) {
             auto fitness = eq.first->get_fitness(points);
             history_entry.min = std::min(history_entry.min, fitness);
@@ -439,40 +521,94 @@ int main() {
         /*     std::cout << '\n'; */
         /* } */
 
-        /* for (size_t i = 0; i < population_size * 0.01; i++) { */
-        /*     new_equations.emplace_back(std::make_pair( */
-        /*             equations[i].first->copy(), */
-        /*             equations[i].second */
-        /*             )); */
-        /* } */
-
-        std::uniform_real_distribution<> random_selection(0.0, fitness_sum);
-        while (new_equations.size() < population_size) {
-            auto selection = random_selection(random_engine);
-            size_t selected_id = 0;
-            for (; selection > 0.0 && selected_id < equations.size(); selected_id++) {
-                selection -= equations[selected_id].second;
-            }
-            if (selected_id >= equations.size())
-                selected_id = equations.size() - 1;
+        for (size_t i = 0; i < population_size * 0.05; i++) {
             new_equations.emplace_back(std::make_pair(
-                        equations[selected_id].first->copy(),
-                        equations[selected_id].second
+                    equations[i].first->copy(),
+                    equations[i].second
+                    ));
+        }
+
+        while (new_equations.size() < population_size) {
+            auto eq1 = random_equation(random_engine);
+            auto eq2 = random_equation(random_engine);
+            if (equations[eq2].second > equations[eq1].second)
+                eq1 = eq2;
+            new_equations.emplace_back(std::make_pair(
+                        equations[eq1].first->copy(),
+                        equations[eq1].second
                         ));
         }
 
-        std::cout
-            << std::setw(16) << history_entry.min << ' '
-            << std::setw(16) << history_entry.avg << ' '
-            << std::setw(16) << history_entry.max << '\t';
-        best_equation->print(std::cout);
-        std::cout << std::endl;
+        if (generation % 100 == 0) {
+            std::cout
+                << std::setw(8)  << generation << ' '
+                << std::setw(12) << history_entry.min << ' '
+                << std::setw(12) << history_entry.avg << ' '
+                << std::setw(12) << history_entry.max << '\t';
+            best_equation->print(std::cout);
+            std::cout << std::endl;
+        }
 
-        /* getchar(); */
+        glutPostRedisplay();
+        glutMainLoopEvent();
 
         equations.swap(new_equations);
+
+        generation++;
     } while (true || !in_optimum(fitness_history));
 
     return 0;
+}
+
+void reshape(int width, int height) {
+    glViewport(0, 0, width, height);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(WND_LEFT, WND_RIGHT, WND_BOTTOM, WND_TOP);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+void display() {
+    glClearColor(1, 1, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(2, GL_DOUBLE, sizeof(vec2), points.data());
+    glColor3f(1.0f, 0.0f, 0.0f);
+    glPointSize(10.0);
+    glDrawArrays(GL_POINTS, 0, points.size());
+    glDisableClientState(GL_VERTEX_ARRAY);
+
+    if (best_equation) {
+        glColor3f(0.0f, 0.0f, 1.0f);
+        glLineWidth(2.0);
+        glBegin(GL_LINE_STRIP);
+        double x = points.front().x;
+        double step = (WND_RIGHT - WND_LEFT) * PLOT_STEP;
+        for (; x < points.back().x + step / 2; x += step) {
+            auto y = best_equation->evaluate(x);
+            glVertex2d(x, y);
+            if (std::isnan(y)) {
+                std::cout << "X " << x << " Y " << y << '\n';
+                best_equation->print(std::cout);
+                std::cout << std::endl;
+                assert(false);
+            }
+            /* std::cout << "plotting: " << x << '\t' << best_equation->evaluate(x) << '\n'; */
+        }
+        glEnd();
+        glColor3f(0.0f, 1.0f, 0.0f);
+        glBegin(GL_POINTS);
+        for (auto const &p : points) {
+            glVertex2d(p.x, best_equation->evaluate(p.x));
+            /* std::cout << "point: " << p.x << '\t' << best_equation->evaluate(p.x) << '\n'; */
+        }
+        glEnd();
+    }
+
+    glFlush();
 }
 
