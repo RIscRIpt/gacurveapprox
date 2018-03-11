@@ -52,22 +52,7 @@ enum class eqvalue {
     count,
 };
 
-std::vector<vec2> points {
-    vec2{ 1, 2, },
-    vec2{ 2, 3, },
-    vec2{ 3, 15, },
-    vec2{ 4, 25, },
-    vec2{ 4.01, 0 },
-    /* vec2{ 1, 4, }, */
-    /* vec2{ 2, 1 }, */
-    /* vec2{ 3, 10 }, */
-    /* vec2{ 4, 5 }, */
-    /* vec2{ 5, 7 }, */
-    /* vec2{ 6, 3 }, */
-    /* vec2{ 7, 4 }, */
-    /* vec2{ 8, 1 }, */
-    /* vec2{ 9, 2 }, */
-};
+std::vector<vec2> points;
 
 eqfunction rand_func() {
     std::uniform_int_distribution<> random(0, static_cast<int>(eqfunction::count) - 1);
@@ -543,6 +528,13 @@ void init_opengl(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+    size_t npoints;
+    std::cin >> npoints;
+    points.resize(npoints);
+    for (auto &p : points) {
+        std::cin >> p.x >> p.y;
+    }
+
     init_opengl(argc, argv);
 
     const size_t population_size = 200;
