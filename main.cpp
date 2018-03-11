@@ -154,7 +154,6 @@ public:
         switch (std::get<eqvalue>(operation_)) {
             case eqvalue::x: return x;
             default:
-                std::cout << "EQVALUE = " << (int)std::get<eqvalue>(operation_) << std::endl;
                 throw std::out_of_range("invalid eqvalue");
         }
     }
@@ -189,7 +188,6 @@ public:
             switch (std::get<eqvalue>(operation_)) {
                 case eqvalue::x: os << 'x'; break;
                 default:
-                    std::cout << "EQVALUE = " << (int)std::get<eqvalue>(operation_) << std::endl;
                     throw std::out_of_range("invalid eqvalue");
             }
             return;
@@ -411,7 +409,7 @@ void CurveEquation::mutate_tree() {
 void CurveEquation::mutate_coefficients() {
     if (is_constant()) {
         std::uniform_int_distribution<> random_sign(0, 1);
-        std::normal_distribution<> random_mutation(constant(), constant() * 0.1);
+        std::normal_distribution<> random_mutation(constant(), constant() * 0.5);
         bool sign = random_sign(random_engine);
         constant() = random_mutation(random_engine);
         if (sign)
@@ -419,7 +417,9 @@ void CurveEquation::mutate_coefficients() {
     } else if (is_function()) {
         assert(left_ && right_);
         left_->mutate_coefficients();
-        if (function() == eqfunction::power)
+        if (function() != eqfunction::power)
+            right_->mutate_coefficients();
+        else
             right_->mutate_power_coefficient();
     }
 }
@@ -428,10 +428,22 @@ void CurveEquation::mutate_power_coefficient() {
     replace_with_constant(rand_power_constant());
 }
 
-std::pair<PCurveEquation, PCurveEquation>
+std::vector<PCurveEquation>
 crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
 {
+    std::vector<PCurveEquation> all_descendants;
     auto children = std::make_pair(eq1.copy(), eq2.copy());
+
+    auto tree_mutants = std::make_pair(eq1.copy(), eq2.copy());
+    auto coef_mutants = std::make_pair(eq1.copy(), eq2.copy());
+    tree_mutants.first->mutate_tree();
+    tree_mutants.second->mutate_tree();
+    coef_mutants.first->mutate_coefficients();
+    coef_mutants.second->mutate_coefficients();
+    all_descendants.emplace_back(std::move(tree_mutants.first));
+    all_descendants.emplace_back(std::move(tree_mutants.second));
+    all_descendants.emplace_back(std::move(coef_mutants.first));
+    all_descendants.emplace_back(std::move(coef_mutants.second));
 
     std::uniform_int_distribution<> random;
 
@@ -443,7 +455,7 @@ crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
     if (children.first->nodes() - c1cross_node.nodes() + c2cross_node.nodes() > MAX_NODES ||
             children.second->nodes() - c2cross_node.nodes() + c1cross_node.nodes() > MAX_NODES)
     {
-        return {nullptr, nullptr};
+        return all_descendants;
     }
 
     // try swap
@@ -453,7 +465,7 @@ crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
     children.second->recalculate_nodes_count();
 
     if (!children.first->is_valid() || !children.second->is_valid())
-        return {nullptr, nullptr};
+        return all_descendants;
 
     children.first->mutate_tree();
     children.second->mutate_tree();
@@ -464,7 +476,10 @@ crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
     children.first->simplify();
     children.second->simplify();
 
-    return children;
+    all_descendants.emplace_back(std::move(children.first));
+    all_descendants.emplace_back(std::move(children.second));
+
+    return all_descendants;
 }
 
 bool in_optimum(std::vector<fitness_history_entry> const &fitness_history) {
@@ -520,7 +535,7 @@ void init_opengl(int argc, char *argv[]) {
         WND_BOTTOM = std::min(WND_BOTTOM, p.y);
     }
 
-    double wnd_unit = (WND_RIGHT - WND_LEFT) * 0.05;
+    double wnd_unit = (WND_RIGHT - WND_LEFT) * 0.5;
     WND_LEFT -= wnd_unit;
     WND_RIGHT += wnd_unit;
     WND_TOP += wnd_unit;
@@ -547,37 +562,28 @@ int main(int argc, char *argv[]) {
 
     size_t generation = 0;
     do {
+        /* // Mutation */
+        /* /1* std::cout << "Mutation" << std::endl; *1/ */
+        /* std::uniform_real_distribution<> random_mutation(0.0, 1.0); */
+        /* for (auto &eq : equations) { */
+        /*     if (random_mutation(random_engine) < 0.1) { */
+        /*         eq.first->mutate_tree(); */
+        /*         eq.second = eq.first->get_fitness(points); */
+        /*     } */
+        /* } */
+
         std::uniform_int_distribution<> random_equation(0, equations.size() - 1);
         // Crossover
         /* std::cout << "Crossover" << std::endl; */
-        while (equations.size() < population_size * 10) {
+        while (equations.size() < population_size * 12) {
             auto first_equation_id = random_equation(random_engine);
             auto second_equation_id = random_equation(random_engine);
             auto children = crossover_curve_equations(
                     *equations[first_equation_id].first,
                     *equations[second_equation_id].first
                     );
-            if (children.first == nullptr || children.second == nullptr)
-                continue;
-            auto fitness = std::make_pair(
-                    children.first->get_fitness(points),
-                    children.second->get_fitness(points)
-                    );
-            equations.emplace_back(std::make_pair(std::move(children.first), fitness.first));
-            equations.emplace_back(std::make_pair(std::move(children.second), fitness.second));
-        }
-
-        // Mutation
-        /* std::cout << "Mutation" << std::endl; */
-        std::uniform_real_distribution<> random_mutation(0.0, 1.0);
-        for (auto &eq : equations) {
-            if (random_mutation(random_engine) < 0.1) {
-                eq.first->mutate_tree();
-                eq.second = eq.first->get_fitness(points);
-            }
-            if (random_mutation(random_engine) < 0.25) {
-                eq.first->mutate_coefficients();
-                eq.second = eq.first->get_fitness(points);
+            for (auto &&child : children) {
+                equations.emplace_back(std::make_pair(std::move(child), child->get_fitness(points)));
             }
         }
 
@@ -608,12 +614,6 @@ int main(int argc, char *argv[]) {
                     return e1.second > e2.second;
                 });
 
-        /* for (auto const &eq : equations) { */
-        /*     std::cout << eq.second << '\t'; */
-        /*     eq.first->print(std::cout); */
-        /*     std::cout << '\n'; */
-        /* } */
-
         for (size_t i = 0; i < population_size * 0.05; i++) {
             new_equations.emplace_back(std::make_pair(
                     equations[i].first->copy(),
@@ -632,15 +632,13 @@ int main(int argc, char *argv[]) {
                         ));
         }
 
-        if (generation % 100 == 0) {
-            std::cout
-                << std::setw(8)  << generation << ' '
-                << std::setw(12) << history_entry.min << ' '
-                << std::setw(12) << history_entry.avg << ' '
-                << std::setw(12) << history_entry.max << '\t';
-            best_equation->print(std::cout);
-            std::cout << std::endl;
-        }
+        std::cout
+            << std::setw(8)  << generation << ' '
+            << std::setw(12) << history_entry.min << ' '
+            << std::setw(12) << history_entry.avg << ' '
+            << std::setw(12) << history_entry.max << std::endl;
+        best_equation->print(std::cerr);
+        std::cerr << std::endl;
 
         glutPostRedisplay();
         glutMainLoopEvent();
@@ -685,20 +683,17 @@ void display() {
             auto y = best_equation->evaluate(x);
             glVertex2d(x, y);
             if (std::isnan(y)) {
-                std::cout << "NAN DETECTED!!! X " << x << " Y " << y << '\n';
-                best_equation->print(std::cout);
-                std::cout << std::endl;
-                assert(best_equation->is_valid());
-                /* assert(false); */
+                std::cerr << "NAN DETECTED!!! X " << x << " Y " << y << '\n';
+                best_equation->print(std::cerr);
+                std::cerr << std::endl;
+                assert(!best_equation->is_valid());
             }
-            /* std::cout << "plotting: " << x << '\t' << best_equation->evaluate(x) << '\n'; */
         }
         glEnd();
         glColor3f(0.0f, 1.0f, 0.0f);
         glBegin(GL_POINTS);
         for (auto const &p : points) {
             glVertex2d(p.x, best_equation->evaluate(p.x));
-            /* std::cout << "point: " << p.x << '\t' << best_equation->evaluate(p.x) << '\n'; */
         }
         glEnd();
     }
