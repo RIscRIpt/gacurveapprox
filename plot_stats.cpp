@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <deque>
 #include <cmath>
 
@@ -63,6 +64,17 @@ void display() {
     }
     glEnd();
 
+    auto str_avg = "Average: " + std::to_string(fitness_history.back().avg);
+    auto str_max = "Maximum: " + std::to_string(fitness_history.back().max);
+
+    auto height = TOP - BOTTOM;
+    glColor3f(0.0f, 0.0f, 0.5f);
+    glRasterPos2f(LEFT, TOP - height * 0.04);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_avg.c_str()));
+    glColor3f(0.5f, 0.0f, 0.0f);
+    glRasterPos2f(LEFT, TOP - height * 0.02);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_max.c_str()));
+
     glFlush();
 }
 
@@ -77,9 +89,6 @@ int main(int argc, char *argv[]) {
     glutReshapeFunc(reshape);
 
     while (true) {
-        glutPostRedisplay();
-        glutMainLoopEvent();
-
         size_t generation;
         std::cin >> generation;
 
@@ -98,6 +107,9 @@ int main(int argc, char *argv[]) {
 
         /* if (fitness_history.size() > 200) */
         /*     fitness_history.pop_front(); */
+
+        glutPostRedisplay();
+        glutMainLoopEvent();
     }
 
     glutMainLoop();
