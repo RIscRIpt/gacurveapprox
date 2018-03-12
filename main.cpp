@@ -24,7 +24,9 @@ double WND_TOP = 1.0;
 
 constexpr int MAX_NODES = 31;
 
-std::default_random_engine random_engine(std::chrono::system_clock::now().time_since_epoch().count());
+std::default_random_engine random_engine(
+        std::chrono::system_clock::now().time_since_epoch().count()
+        );
 
 struct vec2 {
     vec2() = default;
@@ -478,7 +480,10 @@ bool in_optimum(std::vector<fitness_history_entry> const &fitness_history) {
     {
         avg_mean += he->avg;
     }
-    const long history_length = std::min(optimum_history_length, static_cast<long>(fitness_history.size()));
+    const long history_length = std::min(
+            optimum_history_length,
+            static_cast<long>(fitness_history.size())
+            );
     avg_mean /= history_length;
 
     double sd = 0.0;
