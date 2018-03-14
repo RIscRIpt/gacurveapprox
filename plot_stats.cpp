@@ -17,6 +17,9 @@ struct fitness_history_entry {
     double min, avg, max;
 };
 
+size_t generation;
+size_t similar_eq;
+double fitness_sd;
 std::deque<fitness_history_entry> fitness_history;
 
 void reshape(int width, int height) {
@@ -64,16 +67,26 @@ void display() {
     }
     glEnd();
 
+    auto str_gen = "Generation: " + std::to_string(generation);
+    auto str_sim = "Similar: " + std::to_string(similar_eq);
+    auto str_fsd = "SD: " + std::to_string(fitness_sd);
     auto str_avg = "Average: " + std::to_string(fitness_history.back().avg);
     auto str_max = "Maximum: " + std::to_string(fitness_history.back().max);
 
     auto height = TOP - BOTTOM;
-    glColor3f(0.0f, 0.0f, 0.5f);
-    glRasterPos2f(LEFT, TOP - height * 0.04);
-    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_avg.c_str()));
-    glColor3f(0.5f, 0.0f, 0.0f);
+    glColor3f(0.0f, 0.0f, 0.0f);
     glRasterPos2f(LEFT, TOP - height * 0.02);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_gen.c_str()));
+    glRasterPos2f(LEFT, TOP - height * 0.04);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_sim.c_str()));
+    glRasterPos2f(LEFT, TOP - height * 0.06);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_fsd.c_str()));
+    glColor3f(0.5f, 0.0f, 0.0f);
+    glRasterPos2f(LEFT, TOP - height * 0.08);
     glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_max.c_str()));
+    glColor3f(0.0f, 0.0f, 0.5f);
+    glRasterPos2f(LEFT, TOP - height * 0.10);
+    glutBitmapString(GLUT_BITMAP_9_BY_15, reinterpret_cast<unsigned char const*>(str_avg.c_str()));
 
     glFlush();
 }
@@ -89,8 +102,10 @@ int main(int argc, char *argv[]) {
     glutReshapeFunc(reshape);
 
     while (true) {
-        size_t generation;
-        std::cin >> generation;
+        std::cin
+            >> generation
+            >> similar_eq
+            >> fitness_sd;
 
         if (std::cin.fail())
             break;

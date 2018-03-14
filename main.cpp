@@ -14,7 +14,7 @@
 #include <GL/glext.h>
 #include <GL/freeglut.h> //glut.h extension for fonts
 
-double PLOT_STEP = 0.01;
+double PLOT_STEP = 0.001;
 
 double WND_LEFT = 0.0;
 double WND_RIGHT = 1.0;
@@ -22,7 +22,7 @@ double WND_RIGHT = 1.0;
 double WND_BOTTOM = 0.0;
 double WND_TOP = 1.0;
 
-constexpr int MAX_NODES = 31;
+constexpr int MAX_NODES = 15;
 
 std::default_random_engine random_engine(
         std::chrono::system_clock::now().time_since_epoch().count()
@@ -45,7 +45,9 @@ enum class eqfunction {
     addition,
     subtraction,
     multiplication,
+    division,
     power,
+    sine,
     count,
 };
 
@@ -55,10 +57,12 @@ enum class eqvalue {
 };
 
 std::vector<vec2> points;
+std::vector<eqfunction> allowed_eqfunctions;
 
 eqfunction rand_func() {
-    std::uniform_int_distribution<> random(0, static_cast<int>(eqfunction::count) - 1);
-    return static_cast<eqfunction>(random(random_engine));
+    /* std::uniform_int_distribution<> random(0, static_cast<int>(eqfunction::count) - 1); */
+    std::uniform_int_distribution<> random(0, allowed_eqfunctions.size() - 1);
+    return allowed_eqfunctions[random(random_engine)];
 }
 
 eqvalue rand_value() {
@@ -161,8 +165,14 @@ public:
             case eqfunction::multiplication:
                 return left_->evaluate(x) * right_->evaluate(x);
                 break;
+            case eqfunction::division:
+                return left_->evaluate(x) / right_->evaluate(x);
+                break;
             case eqfunction::power:
                 return std::pow(left_->evaluate(x), right_->evaluate(x));
+                break;
+            case eqfunction::sine:
+                return left_->evaluate(x) * std::sin(right_->evaluate(x));
                 break;
             default:
             case eqfunction::count:
@@ -206,12 +216,26 @@ public:
                 right_->print(os);
                 os << ')';
                 break;
+            case eqfunction::division:
+                os << '(';
+                left_->print(os);
+                os << ")/(";
+                right_->print(os);
+                os << ')';
+                break;
             case eqfunction::power:
                 os << '(';
                 left_->print(os);
                 os << ")^(";
                 right_->print(os);
                 os << ')';
+                break;
+            case eqfunction::sine:
+                os << '(';
+                left_->print(os);
+                os << "sin(";
+                right_->print(os);
+                os << "))";
                 break;
             default:
             case eqfunction::count:
@@ -262,7 +286,7 @@ public:
             error += pow(y - p.y, 2.0);
         }
         double fitness = 1.0 / (error + 1.0);
-        /* fitness += std::sqrt(MAX_NODES - nodes()) * 0.1; */
+        fitness += std::sqrt(MAX_NODES - nodes()) * 0.01;
         return fitness;
     }
 
@@ -298,6 +322,18 @@ public:
         return false;
     }
 
+    size_t hash() const {
+        if (is_function()) {
+            assert(left_ && right_);
+            return (left_->hash() >> 16) ^ (right_->hash() << 16) ^ std::hash<size_t>()(static_cast<size_t>(function()));
+        } else if (is_constant()) {
+            return std::hash<double>()(constant());
+        } else if (is_variable()) {
+            return 0xAAAAAAAAAAAAAAAA;
+        }
+        assert(false);
+    }
+
     static int const ROOT_NODE = 0;
 
 private:
@@ -316,8 +352,14 @@ private:
                 case eqfunction::multiplication:
                     replace_with_constant(left_->constant() * right_->constant());
                     return true;
+                case eqfunction::division:
+                    replace_with_constant(left_->constant() / right_->constant());
+                    return true;
                 case eqfunction::power:
                     replace_with_constant(std::pow(left_->constant(), right_->constant()));
+                    return true;
+                case eqfunction::sine:
+                    replace_with_constant(left_->constant() * std::sin(right_->constant()));
                     return true;
                 default:
                 case eqfunction::count:
@@ -396,7 +438,11 @@ void CurveEquation::mutate_tree() {
 void CurveEquation::mutate_coefficients() {
     if (is_constant()) {
         std::uniform_int_distribution<> random_sign(0, 1);
-        std::normal_distribution<> random_mutation(constant(), constant() * 0.5);
+        auto mu = constant();
+        auto sd = std::abs(constant() * 0.5);
+        if (sd == 0.0)
+            sd = 1;
+        std::normal_distribution<> random_mutation(mu, sd);
         bool sign = random_sign(random_engine);
         constant() = random_mutation(random_engine);
         if (sign)
@@ -469,35 +515,34 @@ crossover_curve_equations(CurveEquation const &eq1, CurveEquation const &eq2)
     return all_descendants;
 }
 
-bool in_optimum(std::vector<fitness_history_entry> const &fitness_history) {
-    const long optimum_history_length = 20;
-    double avg_mean = 0.0;
+double fitness_history_sd(std::vector<fitness_history_entry> const &fitness_history) {
+    const long optimum_history_length = 1000;
+    double max_mean = 0.0;
+    const long history_length = std::min(
+            optimum_history_length,
+            static_cast<long>(fitness_history.size())
+            );
     for (
         auto he = fitness_history.rbegin();
         he != fitness_history.rend()
             && he - fitness_history.rbegin() < optimum_history_length;
         ++he)
     {
-        avg_mean += he->avg;
+        max_mean += he->max;
     }
-    const long history_length = std::min(
-            optimum_history_length,
-            static_cast<long>(fitness_history.size())
-            );
-    avg_mean /= history_length;
+    max_mean /= history_length;
 
     double sd = 0.0;
     for (
         auto he = fitness_history.rbegin();
         he != fitness_history.rend()
-            && std::distance(he, fitness_history.rbegin()) < optimum_history_length;
+            && he - fitness_history.rbegin() < optimum_history_length;
         ++he)
     {
-        sd += pow(he->avg - avg_mean, 2.0);
+        sd += pow(he->max - max_mean, 2.0);
     }
-    sd = sqrt(sd / (history_length - 1));
-
-    return history_length == optimum_history_length && sd < 10.0 && avg_mean > 1e6;
+    sd = sqrt(sd / history_length);
+    return sd;
 }
 
 using equation_w_fitness = std::pair<PCurveEquation, double>;
@@ -533,6 +578,31 @@ void init_opengl(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+    std::string allowed_eqf;
+    std::cin >> allowed_eqf;
+    for (auto f : allowed_eqf) {
+        switch (f) {
+            case '+':
+                allowed_eqfunctions.emplace_back(eqfunction::addition);
+                break;
+            case '-':
+                allowed_eqfunctions.emplace_back(eqfunction::subtraction);
+                break;
+            case '*':
+                allowed_eqfunctions.emplace_back(eqfunction::multiplication);
+                break;
+            case '/':
+                allowed_eqfunctions.emplace_back(eqfunction::division);
+                break;
+            case 'p':
+                allowed_eqfunctions.emplace_back(eqfunction::power);
+                break;
+            case 's':
+                allowed_eqfunctions.emplace_back(eqfunction::sine);
+                break;
+        }
+    }
+
     size_t npoints;
     std::cin >> npoints;
     points.resize(npoints);
@@ -542,7 +612,12 @@ int main(int argc, char *argv[]) {
 
     init_opengl(argc, argv);
 
-    const size_t population_size = 200;
+    double const elite_part = 0.1;
+    double const similar_part = 0.167;
+    double const stop_fitness_sd = 1e-9;
+
+    size_t const population_size = 200;
+    size_t const max_population_size = population_size * 12;
 
     std::vector<fitness_history_entry> fitness_history;
     equation_list equations;
@@ -557,6 +632,8 @@ int main(int argc, char *argv[]) {
         equations.emplace_back(std::make_pair(std::move(equation), fitness));
     }
 
+    double fitness_sd;
+    size_t similar_equations;
     size_t generation = 0;
     do {
         /* // Mutation */
@@ -572,7 +649,7 @@ int main(int argc, char *argv[]) {
         std::uniform_int_distribution<> random_equation(0, equations.size() - 1);
         // Crossover
         /* std::cout << "Crossover" << std::endl; */
-        while (equations.size() < population_size * 12) {
+        while (equations.size() < max_population_size) {
             auto first_equation_id = random_equation(random_engine);
             auto second_equation_id = random_equation(random_engine);
             auto children = crossover_curve_equations(
@@ -606,12 +683,13 @@ int main(int argc, char *argv[]) {
         /* std::cout << "Selection" << std::endl; */
         equation_list new_equations;
 
+        // Elitism
         std::sort(equations.begin(), equations.end(),
                 [](equation_w_fitness const &e1, equation_w_fitness const &e2) {
                     return e1.second > e2.second;
                 });
 
-        for (size_t i = 0; i < population_size * 0.05; i++) {
+        for (size_t i = 0; i < population_size * elite_part; i++) {
             new_equations.emplace_back(std::make_pair(
                     equations[i].first->copy(),
                     equations[i].second
@@ -629,8 +707,20 @@ int main(int argc, char *argv[]) {
                         ));
         }
 
+        // Count similar equations
+        size_t best_equation_hash = best_equation->hash();
+        similar_equations = 0;
+        for (auto const &eq : equations) {
+            if (eq.first->hash() == best_equation_hash)
+                similar_equations++;
+        }
+
+        fitness_sd = fitness_history_sd(fitness_history);
+
         std::cout
             << std::setw(8)  << generation << ' '
+            << std::setw(8)  << similar_equations << ' '
+            << std::setw(12) << fitness_sd << ' '
             << std::setw(12) << history_entry.min << ' '
             << std::setw(12) << history_entry.avg << ' '
             << std::setw(12) << history_entry.max << std::endl;
@@ -643,7 +733,9 @@ int main(int argc, char *argv[]) {
         equations.swap(new_equations);
 
         generation++;
-    } while (true || !in_optimum(fitness_history));
+    } while (similar_equations < max_population_size * similar_part || fitness_sd > stop_fitness_sd); 
+
+    glutMainLoop();
 
     return 0;
 }
@@ -663,27 +755,19 @@ void display() {
     glClearColor(1, 1, 1, 1);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(2, GL_DOUBLE, sizeof(vec2), points.data());
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glPointSize(10.0);
-    glDrawArrays(GL_POINTS, 0, points.size());
-    glDisableClientState(GL_VERTEX_ARRAY);
-
     if (best_equation) {
         glColor3f(0.0f, 0.0f, 1.0f);
         glLineWidth(2.0);
         glBegin(GL_LINE_STRIP);
-        double x = points.front().x;
         double step = (WND_RIGHT - WND_LEFT) * PLOT_STEP;
-        for (; x < points.back().x + step / 2; x += step) {
+        for (double x = WND_LEFT; x <= WND_RIGHT; x += step) {
             auto y = best_equation->evaluate(x);
             glVertex2d(x, y);
             if (std::isnan(y)) {
-                std::cerr << "NAN DETECTED!!! X " << x << " Y " << y << '\n';
-                best_equation->print(std::cerr);
-                std::cerr << std::endl;
-                assert(!best_equation->is_valid());
+                /* std::cerr << "NAN DETECTED!!! X " << x << " Y " << y << '\n'; */
+                /* best_equation->print(std::cerr); */
+                /* std::cerr << std::endl; */
+                /* assert(!best_equation->is_valid()); */
             }
         }
         glEnd();
@@ -694,6 +778,13 @@ void display() {
         }
         glEnd();
     }
+
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(2, GL_DOUBLE, sizeof(vec2), points.data());
+    glColor3f(1.0f, 0.0f, 0.0f);
+    glPointSize(10.0);
+    glDrawArrays(GL_POINTS, 0, points.size());
+    glDisableClientState(GL_VERTEX_ARRAY);
 
     glFlush();
 }
